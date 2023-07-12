@@ -1,0 +1,1063 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>find-me-a-flight airwayfinder travelninja rapid flight explorer</title>
+
+<script src="https://code.jquery.com/jquery-3.7.0.min.js" integrity="sha256-2Pmvv0kuTBOenSvLm6bvfBSSHrUJ+3A7x6P5Ebd07/g=" crossorigin="anonymous"></script>
+
+<script src="https://code.jquery.com/ui/1.13.2/jquery-ui.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/moment.min.js"></script>
+  
+<!--link href="dist/css/tabulator_modern.css" rel="stylesheet"-->
+
+<style>
+/* Links inside the dropdown */
+.popup-menu a {
+  color: white;
+  backgroundColor: black;
+  padding: 12px 16px;
+  text-decoration: none;
+  display: block;
+}
+
+.params {
+  display: none;
+  grid-gap: 5px;
+}
+.inputdiv {
+  color: red;
+}
+.inputparams {
+  position: absolute;
+  left: 25%;
+}
+
+.ui-datepicker {
+  background: #999 none;
+}
+</style>
+
+<link href="https://cdnjs.cloudflare.com/ajax/libs/tabulator/3.5.2/css/tabulator.min.css" rel="stylesheet">
+<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/tabulator/3.5.2/js/tabulator.min.js"></script>
+
+<script type="text/javascript">
+
+// Global variables
+const now = new Date();
+const today = now.toLocaleDateString();
+now.setDate( now.getDate() + 7 );
+const next_week = now.toLocaleDateString();
+
+var params = {
+    preset :  { value: "weekend", label: "Preset" },
+    flyFrom : { value: "houston", label : "Origin airport/city/country (case sensitive!)" },   // default: Houston International, Hobby Airport
+    viaUS :   { value: false, label : "Via any US hub" },
+    flyTo   : { value: null, label : "Destination airport/city/country (case sensitive!)" },   // default: any
+    dtimefrom : { value: null, label : "Minimum departure time (13:00=1pm)" },        // Departure time, e.g. "16:00"
+    dtimeto : { value: null, label : "Latest departure time (13:00=1pm)" },           // Departure time, e.g. "16:00"
+    maxFlyDuration : { value : 5, label : "Max flight duration (hours)" },
+    maxstopovers : { value : 5, label : "Max number of stops" },
+    maxFlyPrice : { value : 1000, label : "Max flight cost ($)" },
+    nightsToStay : { value: 2, label : "Number of nights away" },            // Number of nights to stay
+    adults : { value: 2, label : "Number of adults travelling" },
+    childs : { value: 1, label : "Number of children travelling" },
+    
+    leaveFrom : { value : today, label: "Earliest departure date", date: true },    // First day to leave from, US syntax mm/dd/yy
+    leaveTo :   { value : next_week, label: "Latest departure date", date: true },      // Ultimate departure date
+    dayInWeek:  { value: "", label : "Particular day in week, e.g. Friday=5" },
+    
+    singleAirline : { value: false, label: "Search connecting flights from same airline" },
+    minTransit    : { value: 30, label: "Minimum time between connections (min)" },
+};
+
+// see https://blog.tripplus.cc/en/30060/hubs-major-airlines-in-north-america
+const airline_hubs = {
+  AA : [ "LGA", "JFK", "PHL", "DCA", "CLT", "MIA", "ORD", "DFW", "PHX", "LAX" ],
+  UA : [ "EWR", "IAD", "ORD", "IAH", "DEN", "SFO", "LAX" ],
+  DL : [ "BOS", "LGA", "JFK", "DTW", "CVG", "ATL", "MSP", "SLC", "SEA", "LAX" ],
+  WN : [ "BWI", "ATL", "MCO", "FLL", "TPA", "BNA", "MKE", "MDW", "DAL", "HOU", "DEN", "LAS", "PHX", "OAK", "LAX", "SNA", "SAN" ], // Southwest "Focus" airports, not hubs
+  B6 : [ "BOS", "JFK", "MCO", "FLL", "SJU", "LGB" ],  // Jet blue focus airports
+};
+
+// see https://www.imoova.com/imoova/relocations: Las Vegas, Los Angeles, Chicago (ORD/MDW)
+const iMoova_locs = "LAS,LAX,ORD,MDW,SBN,AZO";
+
+function list_airlines_if_hub( airport ) {
+  // console.log( "Check hub status for: " + airport );
+  var airlines = [];
+  for ( var i in airline_hubs ) {
+    if ( airline_hubs[i].indexOf(airport) >= 0 ) airlines.push( i );
+    // else console.log( airport + " not in " + airline_hubs[i] );
+  }
+  return airlines;
+}
+
+function getRVDeals() {
+  $.get( 'https://www.cruiseamerica.com/rent/hot_deals/', function( html ) {
+
+    // Loop through elements you want to scrape content from
+    $(html).find("table.basic-list-table").each( function() {
+        var text = $(this).text();
+        // Do something with content
+
+    } )
+  } );
+}
+
+// see https://en.wikipedia.org/wiki/List_of_the_busiest_airports_in_the_United_States, by number of passengers. These are hubs
+const top10_airports = [ "ATL", "LAX", "ORD", "DFW", "JFK", "DEN", "SFO", "LAS", "CLT", "SEA" ];
+
+var paramDiv, presetNames = [];
+
+function loadPresetNames() {
+  var presets = window.localStorage.getItem('presets');
+  if (presets) {
+     presetNames = JSON.parse( presets );
+  } else {
+     presetNames = [];
+  }
+}
+
+function savePreset() {
+  var name = params.preset.value;
+  var nvpairs = {}
+  for ( var i in params ) {
+    nvpairs[i] = params[i].value;
+  }
+  window.localStorage.setItem(name, JSON.stringify( nvpairs ));
+  if ( !(name in presetNames) ) {
+     presetNames.push( name );
+     window.localStorage.setItem('presets',JSON.stringify(presetNames));
+  }  
+}
+
+function loadPreset(name) {
+  const preset = window.localStorage.getItem(name);
+  if (preset) {
+     const paramvalues = JSON.parse( preset );
+     console.log( "Param values: " + JSON.stringify(paramvalues) );
+     for ( var i in paramvalues ) {
+       params[i].value = paramvalues[i];
+     }
+     console.log( "Loaded: " + JSON.stringify(params) );
+  } else {
+     console.error( "Preset not found: " + name );
+  }
+  
+  if ( name == "weekend" ) {
+     var nextFriday = new Date(); nextFriday.setDate( nextFriday.getDate() 
+                    + ( nextFriday.getDay() <= 5 ? 5 - nextFriday.getDay() : 6 ) );
+     params.leaveFrom.value = params.leaveTo.value = nextFriday.toLocaleDateString("en-US");
+     params.nightsToStay.value = 2;
+     params.dtimefrom.value = "16:00";
+     
+     console.log( "Weekend preset: " + nextFriday );
+  } else if ( name == "next school holiday" ) {
+     // todo: lookup dates, set them. Not only 'next' but all school holidays and long weekends
+  }
+  
+  // reload controls
+  $('.inputparams').each( function() {
+      $(this).val( params[ $(this).attr('name') ].value );
+  });
+  
+  sessionParams = Object.assign( {}, resetSessionParams );
+  refreshFlights();
+}
+
+const resetSessionParams = {
+    firstFlightPrice: null,  // Price of initial flight(s)
+    selectedAirline: null,   // For connecting flights or return flights
+};
+
+var sessionParams = Object.assign( {}, resetSessionParams );
+
+function dump(obj) {
+    var blacklist = {};
+    
+    var lastField;
+    
+    function listKeys(key,value) {
+        lastField = key;
+        return blacklist[key] ? "<circular>" : value;
+    }
+    
+    while (true) {
+        try {
+            return JSON.stringify(obj,listKeys);
+        } catch (e) {
+            console.log( "Blacklisting circular ref field: " + lastField );
+            blacklist[lastField] = true;
+        }
+    }
+}
+
+function buildSubmitForm(url,fields) {
+
+ // Create a form
+ var mapForm = document.createElement("form");
+ mapForm.target = "_blank";   // 'detail_frame'; // doesn't work in a frame 
+ mapForm.method = "POST";
+ mapForm.action = url;
+ mapForm.style.display = "none";
+  
+ // Create input fields
+ for ( var v in fields ) {
+   var mapInput = document.createElement("input");
+   mapInput.type = "text";
+   mapInput.name = v;
+   mapInput.value = fields[v];
+ 
+   // Add the input to the form
+   mapForm.appendChild(mapInput);
+ }
+ 
+ // Add the form to dom, in iframe doesn't work
+ document.body.appendChild(mapForm);
+ 
+ // Just submit
+ mapForm.submit();
+}
+
+function bookWithNorwegian(data) {
+  // https://www.norwegian.com/us/ipc/availability/avaday?A_City=FCO&AdultCount=1&ChildCount=0&CurrencyCode=USD&D_City=LAX&D_Day=01&D_Month=201907&D_SelectedDay=01
+  // &IncludeTransit=true&InfantCount=0&R_Day=22&R_Month=201907&R_SelectedDay=22&TripType=2&mode=ab
+}
+
+function findFlightsOnCleartrip() {
+  // https://me.cleartrip.com/flights/international/results?from=ROM&to=AMS&depart_date=10/06/2018&adults=1&childs=0&infants=0&class=Economy
+  // &airline=&carrier=&intl=y&sd=1527537395111&page=loaded
+}
+
+function priceFlight(from,to,airline,date,callback) {
+ console.log( "priceFlight: from="+from+" to="+to+" date="+date );
+
+ var url = "https://api.skypicker.com/flights?curr=USD&partner=picky" // http gets redirected
+ // url += "&flyFrom=IAH,HOU,EFD"; // include hobby and ellington field ( no flights found )
+ url += "&flyFrom=" + from; // one value, but can be "US" to fly from anywhere in US
+ url += "&to=" + to; // supports comma-separated list
+ url += "&adults="+params.adults.value;
+ url += "&children="+params.childs.value;
+ url += "&dateFrom=" + encodeURIComponent( $.datepicker.formatDate('dd/mm/yy', new Date( date ? date : params.leaveFrom.value ) ) );   // EU format dd/mm/yyyy
+ url += "&dateTo="   + encodeURIComponent( $.datepicker.formatDate('dd/mm/yy', new Date( date ? date : params.leaveTo.value ) ) );
+ url += "&typeFlight=" + ( $('#roundtrip').is(':checked') ? 'round' : 'oneway' );
+ url += "&directFlights=1";
+ // url += "&daysInDestinationFrom=" + params.nightsToStay.value + "&daysInDestinationTo=" + params.nightsToStay.value;
+ if ( airline ) url += "&selectedAirlines="+airline+"&selectedAirlinesExclude=false";
+ // url += "&one_per_date=1";
+ if (params.dtimefrom.value) {
+   url += "&dtimefrom=" + /* encodeURIComponent( */ params.dtimefrom.value;
+   url += "&dtimeto=" + ( params.dtimeto.value || "23:59" );
+ }
+ if (date) {
+   const earliest = new Date( date.getTime() - 240*60*1000 );  // Up to 4 hours before
+   url += "&atimefrom="+earliest.toLocaleString('en-US', { hour: 'numeric', minute: 'numeric', hour12: false });
+   url += "&atimeto="+date.toLocaleString('en-US', { hour: 'numeric', minute: 'numeric', hour12: false });
+ }
+ 
+ console.log( "priceFlight -> Loading: " + url );
+ $('#flightsfound').text( "Pricing..." );
+ $.get( url, function( result ) {
+    console.log( JSON.stringify( result.data ) );
+    callback( result.data );
+ });
+}
+
+var routes_per_airline = {};
+var routes_from_airport = {};
+var routes_to_airport = {};
+
+function getIndirectFlights(from,to) {
+    var indirectflights = [], vias = {};
+    for ( var r in routes_from_airport[from] ) {
+      const f = routes_from_airport[from][r];
+      for ( var d in routes_from_airport[f.to] ) {
+       const t = routes_from_airport[f.to][d];
+       if ( t.to == to ) {
+         const e = vias[f.to];
+         if ( e ) {
+           if ( e.airlines.indexOf(f.airline)==-1 ) e.airlines.push( f.airline );
+           if ( e.airlines.indexOf(t.airline)==-1 ) e.airlines.push( t.airline );
+         } else {
+           var al = [f.airline];
+           if ( f.airline!=t.airline ) al.push( t.airline );
+           indirectflights.push( vias[f.to] = { from: from, via: f.to, to: to, stops: 1 + f.stops + t.stops, airlines: al } );
+         }
+       } else {
+         for ( var v in routes_from_airport[t.to] ) {
+           const via = routes_from_airport[t.to][v];
+           if ( via.to == to ) {
+             const e = vias[f.to+t.to];
+             if (!e) {
+                indirectflights.push( vias[f.to+t.to] = { from: from, via1: f.to, via2: t.to, to: to, stops: 2 + f.stops + t.stops + via.stops, airlines: [ f.airline, via.airline, t.airline ] } );
+             }
+           }
+         }
+       }
+      }
+    }
+    return indirectflights;
+}
+
+function getRoutes(from,to) {
+  console.log( "Get routes from " + from + " to " + to );
+  $.get( "https://raw.githubusercontent.com/jpatokal/openflights/master/data/routes.dat", function(data) {
+    const lines = data.split('\n');
+    var directflights = [];
+    for ( var l in lines ) {
+       const fields = lines[l].split(',');
+       /*
+        Airline 2-letter (IATA) or 3-letter (ICAO) code of the airline.
+        Airline ID  Unique OpenFlights identifier for airline (see Airline).
+        Source airport  3-letter (IATA) or 4-letter (ICAO) code of the source airport.
+        Source airport ID   Unique OpenFlights identifier for source airport (see Airport)
+        Destination airport 3-letter (IATA) or 4-letter (ICAO) code of the destination airport.
+        Destination airport ID  Unique OpenFlights identifier for destination airport (see Airport)
+        Codeshare   "Y" if this flight is a codeshare (that is, not operated by Airline, but another carrier), empty otherwise.
+        Stops   Number of stops on this flight ("0" for direct)
+        Equipment   3-letter codes for plane type(s) generally used on this flight, separated by spaces
+       */
+       const airline = fields[0];
+       const src_airport = fields[2];
+       const dst_airport = fields[4];
+       const stops = parseInt( fields[7] );
+       
+       const e = { airline: airline, from: src_airport, to: dst_airport, stops: stops };
+       routes_per_airline[ airline ] = ( routes_per_airline[ airline ] ? routes_per_airline[ airline ] : [] ).concat( [e] );
+       routes_from_airport[ src_airport ] = ( routes_from_airport[ src_airport ] ? routes_from_airport[ src_airport ] : [] ).concat( [e] );
+       routes_to_airport[ dst_airport ] = ( routes_to_airport[ dst_airport ] ? routes_to_airport[ dst_airport ] : [] ).concat( [e] );
+       
+       if ( src_airport == from && dst_airport == to ) {
+         priceFlight( from, to, airline, null, function(data) {
+           if ( data.length>0 ) {
+              e.price = data[0].price;
+              e.flight_no = data[0].route[0].flight_no;
+           }
+           directflights.push( e );
+           
+           // Log direct flights
+           console.log( "Direct flights: " + JSON.stringify(directflights) );
+         });
+       }
+    }
+    
+    var indirectflights = getIndirectFlights(from,to);
+    console.log( "1-hop flights: " + indirectflights.length + ' = ' + JSON.stringify(indirectflights) );
+    
+  });
+}
+
+
+
+function bookWithUnited(data) 
+{
+  var date = $.datepicker.formatDate('MM d, yy', new Date( parseInt( data.r.dTimeUTC ) * 1000 ) );
+  
+  /* Crashes
+  var url = "https://www.united.com/ual/en/us/flight-search/book-a-flight/results/rev?f=HOU"
+  url += "&t=" + data.r.flyTo;
+  url += "&d=" + date;
+  url += "&r=2019-03-17";  // todo return date
+  url += "&sc=7,7&px=3&taxng=1";
+  */
+  
+  var vars = {
+    FareTypes:"lf",
+    hdnMaxAllowedTravelersCount:"9",
+    SearchTypeMain: "roundTrip",
+    autoCompAirportText:"See full airport list",
+    clearHisText:"Clear history",
+    recentsearchLazyload: "True",
+    recentSearchSubmit: "False",
+    recentsearchTripCloning: "True",
+    Origin: "HOU",
+    Destination: data.r.flyTo,
+    Flexible: "false",
+    CorporateBooking: "false",
+    DepartDate: date,
+    ReturnDate: "Mar 18, 2019",
+    flexMonth: "2/24/2019",
+    tripLength: params.nightsToStay.value,  // in days
+    NumOfAdults:params.adults.value,
+    NumOfSeniors:0,
+    NumOfChildren04:0,
+    NumOfChildren03:0,
+    NumOfChildren02:1,
+    NumOfChildren01:0,
+    NumOfInfants:0,
+    NumOfLapInfants:0,
+    cabinType: "econ",
+    awardCabinType:"awardEcon",
+    AwardTravel:false,
+    NonStopOnly:false,
+    search: ""
+  };
+
+  buildSubmitForm( "https://www.united.com/ual/en/us/flight-search/book-a-flight", vars );
+}
+
+function bookWithSpirit(data) {
+
+ console.log( "Book with Spirit: " + dump(data) );
+ 
+ var date = new Date( parseInt( data.r.dTimeUTC ) * 1000 );
+ var leaveDate  = date.toLocaleDateString('en-us');
+ date.setDate(date.getDate() + minNights() );
+ var returnDate = date.toLocaleDateString('en-us');
+ var vars = {
+  HiddenGuid:"f1d31072-170b-4b95-9fb3-7ae94d7596ca",
+  bypassHC:"True",  // Skip hotel+car booking
+  birthdates:"3/24/2010",
+  lapoption:"",
+  awardFSNumber:"366237141",    // My Free Spirit account
+  bookingType: "F",
+  hotelOnlyInput: "",
+  autoCompleteValueHidden: "",
+  carPickUpTime:16,
+  carDropOffTime:16,
+  tripType:"roundTrip",
+  vacationPackageType:"on",
+  from: data.r.flyFrom,
+  to: data.r.flyTo,
+  departDate: leaveDate,
+  departDateDisplay: leaveDate,
+  returnDate:returnDate,
+  returnDateDisplay:returnDate,
+  ADT:2,
+  CHD:1,
+  INF:0,
+  promoCode:"",
+  fromMultiCity1:"",
+  toMultiCity1:"",
+  dateMultiCity1:"",
+  dateMultiCityDisplay1:"",
+  fromMultiCity2:"",
+  toMultiCity2:"",
+  dateMultiCity2:"",
+  dateMultiCityDisplay2:"",
+  fromMultiCity3:"",
+  toMultiCity3:"",
+  dateMultiCity3:"",
+  dateMultiCityDisplay3:"",
+  fromMultiCity4:"",
+  toMultiCity4:"",
+  dateMultiCity4:"",
+  dateMultiCityDisplay4:"",
+  redeemMiles:false
+ }
+ 
+ buildSubmitForm( "https://www.spirit.com/Default.aspx?action=search", vars );
+}
+
+function lookForMarriott(data) {
+  // Sample for Boston: https://www.marriott.com/search/submitSearch.mi?roomTypeCode=&recordsPerPage=20&autoSuggestItemType=&destinationAddress.types=&destinationAddress.latitude=
+  //                    &propertyCode=&destinationAddress.stateProvinceShort=&destinationAddress.cityPopulation=&vsInitialRequest=false&searchType=InCity&destinationAddress.locality=
+  //                    &showAddressPin=&miniStoreFormSubmit=&destinationAddress.stateProvinceDisplayName=&countryName=&destinationAddress.stateProvince=&searchRadius=50.0
+  //                    &singleSearchAutoSuggest=&missingcheckInDateMsg=Please+enter+a+check-in+date.&destinationAddress.placeId=&is-hotelsnearme-clicked=false&destinationAddress.addressline1=
+  //                    &airportName=&for-hotels-nearme=Near&missingcheckOutDateMsg=Please+enter+a+check-out+date.&pageType=advanced&destinationAddress.country=&destinationAddress.name=
+  //                    &poiCity=&destinationAddress.countryShort=&poiName=&destinationAddress.address=&search-countryRegion=&singleSearch=true&destinationAddress.cityPopulationDensity=
+  //                    &destinationAddress.secondaryText=&destinationAddress.postalCode=&destinationAddress.city=&destinationAddress.mainText=&airportCode=&destinationAddress.longitude=
+  //                    &initialRequest=false&destinationAddress.website=&search-locality=&dimensions=0&roomTypeCode=&propertyCode=&flexibleDateSearchRateDisplay=false&propertyName=
+  //                    &isSearch=true&marriottRewardsNumber=&isRateCalendar=false&incentiveType_Number=&incentiveType=&flexibleDateLowestRateMonth=&flexibleDateLowestRateDate=
+  //                    &js-location-nearme-values=&destinationAddress.destination=Boston&fromToDate=Mon%2C+Mar+5%2C+2018&fromToDate_submit=03%2F05%2F2018&fromDate=03%2F02%2F2018
+  //                    &toDate=03%2F05%2F2018&flexibleDateSearch=false&lengthOfStay=3&roomCountBox=1+Room&roomCount=1&guestCountBox=2+Adult+Per+Room&numAdultsPerRoom=2
+  //                    &childrenCountBox=1+Children+Per+Room&childrenCount=1&childrenAges=7&clusterCode=none&corporateCode=
+  const aTimeUTC = parseInt( data.r.aTimeUTC );
+  var fromDate = $.datepicker.formatDate('mm/dd/yy', new Date( aTimeUTC * 1000 ) );
+  var toDate = $.datepicker.formatDate('mm/dd/yy', new Date( ( aTimeUTC + minNights()*24*3600 ) * 1000 ) );
+
+  // var url = "https://www.marriott.com/search/submitSearch.mi?roomTypeCode=&recordsPerPage=20&autoSuggestItemType=&destinationAddress.types=&destinationAddress.latitude=&propertyCode=&destinationAddress.stateProvinceShort=&destinationAddress.cityPopulation=&vsInitialRequest=false&searchType=InCity&destinationAddress.locality=&showAddressPin=&destinationAddress.stateProvinceDisplayName=&countryName=&destinationAddress.stateProvince=&searchRadius=50&singleSearchAutoSuggest=&destinationAddress.placeId=&airportName=&for-hotels-nearme=Near&destinationAddress.country=&destinationAddress.name=&poiCity=&destinationAddress.countryShort=&poiName=&destinationAddress.address=&search-countryRegion=&singleSearch=true&destinationAddress.cityPopulationDensity=&destinationAddress.secondaryText=&destinationAddress.postalCode=&destinationAddress.city=&destinationAddress.mainText=&airportCode=&destinationAddress.longitude=&initialRequest=true&destinationAddress.website=&search-locality=&roomTypeCode=&propertyCode=&flexibleDateSearchRateDisplay=false&propertyName=&isSearch=true&marriottRewardsNumber=&isRateCalendar=false&incentiveType_Number=&incentiveType=&flexibleDateLowestRateMonth=&flexibleDateLowestRateDate=&js-location-nearme-values=&destinationAddress.destination=boston&fromToDate=Fri%2C+Mar+16%2C+2018&fromToDate_submit=03%2F16%2F2018&fromDate=03%2F11%2F2018&toDate=03%2F16%2F2018&flexibleDateSearch=false&roomCountBox=1+Room&roomCount=1&guestCountBox=2+Adults+Per+Room&numAdultsPerRoom=2&childrenCountBox=1+Child+Per+Room&childrenCount=1&childrenAges=7&clusterCode=none&corporateCode=";
+  var url = "https://www.marriott.com/search/submitSearch.mi?searchRadius=50.0";
+  // url += "&destinationAddress.country=" + data.countryTo;
+  // url += "&destinationAddress.name=&poiCity=&destinationAddress.countryShort=&singleSearch=true&initialRequest=true&isSearch=true&marriottRewardsNumber=";
+  url += "&destinationAddress.destination=" + encodeURIComponent(data.r.cityTo);
+  url += "&fromDate=" + encodeURIComponent(fromDate);
+  url += "&toDate=" + encodeURIComponent(toDate);
+  url += "&guestCountBox=2+Adults+Per+Room&numAdultsPerRoom="+params.adults.value;
+  const children = parseInt( params.childs.value );
+  if ( children>0 ) url += "&childrenCountBox="+children+"+Child+Per+Room&childrenCount="+children+"&childrenAges=8"; 
+
+  // test https://www.marriott.com/search/submitSearch.mi?destinationAddress.destination=monterrey&fromDate=05/01/2018&toDate=05/10/2018
+  
+  window.open( url );  
+}
+
+// Formats "{field}" placeholders with values from row data
+function formatText( text, data ) {
+ for ( var f in data ) {
+   text = text.replace( '{' + f + '}', data[f] );
+ }
+ return text;
+}
+
+function createPopup(event,data,entries) {
+  var target = $( event.target );
+  console.log( "Create pop-up: " + JSON.stringify(target.offset()) );
+  
+  var div = $("<div>");
+  div.addClass("popup-menu");
+  div.css( { position: "absolute", left: target.offset().left + "px", top : target.offset().top + "px", backgroundColor: "black" } );
+  
+  for ( var i in entries ) {
+      const e = entries[i];
+      var link = $("<a>");
+      link.attr("title", formatText( e.title,data ) );
+      link.attr("href", "#");   // to make mouse pointer change
+      link.text( formatText( e.text, data ) );
+      link.addClass("link");
+      
+      link.click( function(ev) {
+         ev.stopImmediatePropagation();
+         div.remove();
+         if ( e.callback ) e.callback( data );
+         return false;
+      });
+      div.append(link);
+  }  
+  $( "body" ).append( div );
+}
+
+function createParamsDiv(params) {
+  var div = $("<div>");
+  div.attr("id","params");
+  div.addClass("params");
+  // div.css( { position: "relative", backgroundColor: "black" } );
+  for ( var i in params ) {
+      const e = params[i];
+      var input = $("<input type='" + (typeof(e.value) == "boolean" ? "checkbox" : "text") + "'>").attr({
+        id : i,
+        name : i,
+        value : e.value
+      });
+      input.addClass("inputparams");
+      if ( e.date ) input.datepicker();
+      const name = i;
+      input.change( function(ev) {
+        console.log( "Input changed: " + name );
+        params[name].value = typeof(e.value) == "boolean" ? this.checked : this.value; 
+        refreshFlights(); 
+      } );
+      // console.log( "e=" + typeof(e.value) + " input: " + JSON.stringify(input) );
+      var label = $("<label>");
+      label.addClass("inputlabel");
+      label.text( e.label );
+      label.attr( { 'for' : i } )
+      var div2 = $("<div>");
+      div2.addClass("inputdiv");
+      div2.append( label );
+      div2.append( input );
+      div.append( div2 );
+  }
+  var presets = $("<div>");
+  div.addClass("preset");
+  var button = $("<button type='submit'>");
+  button.text( "Inputs" );
+  button.click( function(e) {
+     // animate enable/show settings
+     $( "#params" ).slideDown( "slow", function() {
+       // Animation complete.
+       
+       button.bind( 'click.menu', function(e2) {
+           var items = [
+              { title: "Save preset", text: "Save preset", callback : function() { savePreset(); div.css( { display: "none" } ); } },  // preset name
+              { title: "Close params", text: "Close", callback : function() { div.css( { display: "none" } ); } },
+              { title: "Clear all presets", text: "Clear all", callback : function() { window.localStorage.removeItem('presets'); presetNames=[]; div.css( { display: "none" } ); } },
+           ];
+           for ( var n in presetNames ) {
+             const name = presetNames[n];
+             items.push( { title: "Load preset " + name, text: "Load preset '"+name+"'", callback : function() { loadPreset(name); div.css( { display: "none" } ); } } );
+           }
+         
+           createPopup( e2, params, items );
+           button.unbind( 'click.menu' );
+           return false; 
+      });
+    });
+  });
+  presets.append( button );
+  $( "body" ).prepend( div );
+  $( "body" ).prepend( presets );
+  
+  paramDiv = div;
+}
+
+function minNights() {
+  const v = params.nightsToStay.value;
+  if ( v && (typeof v == 'string') ) {
+    return parseInt( v.split('-')[0] );
+  } else return v;
+}
+
+function openAirbnb(data) {
+  var place = encodeURIComponent(data.r.cityTo);
+  var url = "https://www.airbnb.com/s/"+place+"/homes?query="+place
+          +"&refinement_paths%5B%5D=%2Fhomes&allow_override%5B%5D=&adults="+params.adults.value+"&children="+params.childs.value;
+  
+  const arrivalDate = getLocalDate( data.r.aTimeUTC, data.r.countryTo.name );
+  url += "&checkin=" + $.datepicker.formatDate('mm/dd/yy', arrivalDate );
+  const checkoutDate = new Date( ( parseInt( data.r.aTimeUTC ) + minNights()*3600*24 ) * 1000 );
+  url += "&checkout="+ $.datepicker.formatDate('mm/dd/yy', checkoutDate );
+  // $('#detail_frame').attr('src', url)
+  window.open( url );
+}
+
+function addprices(s){
+    var total = 0;
+    s = s.replace(/\s\$/g, '').match(/[+\-]?([0-9\.\s]+)/g) || [];
+    while(s.length){
+        total += parseFloat(s.shift());
+    }
+    return total;
+}
+
+/**
+ * Note: API doesn't return direct flights from IAH to LAX for example but you can get a 1-hop trip from IAH to Rome via LAX.
+ * Guess they try to protect their business model of creating cheaper exotic combo flights, at the expense of simple Spirit flights
+ */
+function refreshFlights() {
+  const dests = params.flyTo.value ? params.flyTo.value.split(',') : [null];
+  
+  function getFlightsRecursive(ds,data) {
+    const d = ds.shift();
+    getFlights(d).then( function(results) {
+      console.log( "Adding results: " + JSON.stringify(results) );
+
+      data = data.concat( results );
+      if ( ds.length > 0 ) return getFlightsRecursive(ds,data);
+      const dest = params.flyTo.value || "anywhere";
+      $('#flightsfound').text( params.flyFrom.value + ' to ' + dest + ' in [' + params.leaveFrom.value + ' - ' 
+                             + params.leaveTo.value + '] - ' + data.length );
+      
+      for ( var i in data ) {
+         data[i].id = i;
+		 
+		 if ( params.viaUS.value ) {
+		   const flight = data[i];
+		   const atime = parseInt( flight.r.dTimeUTC ) - parseInt( params.minTransit.value ) * 60;
+	       priceFlight( params.flyFrom.value, flight.r.flyFrom, null, new Date(atime*1000), function (flights_in) {
+	         console.log( "Flights in: " + flights_in.length );
+			 flight.flights_in = flights_in;
+			 if ( flights_in.length > 0 ) {
+				 var minPrice = 10000;
+				 for ( var i in flights_in ) {
+					const f = flights_in[i];
+					if ( f.price < minPrice ) minPrice = f.price;
+				 }
+				 flight.min_price_in = "Flight in from $" + minPrice;
+				 flight.total_price = flight.r.price + minPrice;
+			 } else {
+			     flight.min_price_in = "No direct flights found";
+				 flight.total_price = flight.r.price + 10000;
+			 }
+		     $("#example-table").tabulator("updateData", data );
+		   });
+		 }
+      }
+      $("#example-table").tabulator("setData", data);
+      // $("#example-table").tabulator("redraw", true);  // resize columns?
+    }, function(error) {
+        $('#flightsfound').text( error );
+    });
+  }
+ 
+  $('#flightsfound').text( "Reloading..." ); 
+  return getFlightsRecursive( dests, [] );
+}
+
+function getAirlines( iata_codes ) {
+  const map = {
+    "KL" : "KLM",
+    "VY" : "Vueling",
+    "AZ" : "Alitalia",
+    "U2" : "easyJet",
+    "FR" : "Ryanair",
+    "LX" : "Swiss Int.",
+  };
+  for ( var i in iata_codes ) {
+    if ( iata_codes[i] in map ) {
+      iata_codes[i] = map[ iata_codes[i] ];
+    }
+  }
+  return iata_codes;
+}
+
+// Returns the local departure date/time
+function getLocalDate( utcTime, country ) {
+  const locDate = new Date( parseInt( utcTime ) * 1000 ); // in browser's timezone
+  
+  const UTCOffset = {
+   "Italy"  : +7,       // hours
+   "Netherlands" : +7,
+   "France" : +7,
+   "Ireland" : +7,
+  };
+  
+  if ( country in UTCOffset ) {
+    return new Date( locDate.getTime() + UTCOffset[ country ] * 3600000 );
+  } else {
+    console.log( "Unable to convert time to local: " + country );
+    return locDate;
+  }
+}
+
+function getFlights(to) {
+console.log( "getFlights to="+to );
+return new Promise( function(resolve,reject) {
+ var url = "https://api.skypicker.com/flights?curr=USD&partner=picky" // http gets redirected
+ // url += "&flyFrom=IAH,HOU,EFD"; // include hobby and ellington field ( no flights found )
+ url += "&flyFrom=" + encodeURIComponent( params.viaUS.value ? "US" : params.flyFrom.value ); // include hobby and ellington field
+ // url += "&flyFrom=US";
+ url += "&adults="+params.adults.value+"&children=" + params.childs.value;
+ url += "&dateFrom=" + encodeURIComponent( $.datepicker.formatDate('dd/mm/yy', new Date( params.leaveFrom.value ) ) );   // EU format dd/mm/yyyy
+ url += "&dateTo="   + encodeURIComponent( $.datepicker.formatDate('dd/mm/yy', new Date( params.leaveTo.value ) ) );
+ 
+ if (params.dtimefrom.value) {
+   url += "&dtimefrom=" + /* encodeURIComponent( */ params.dtimefrom.value;
+   url += "&dtimeto=" + ( params.dtimeto.value || "23:59" );
+ }
+ if (params.maxstopovers.value) url += "&maxstopovers=" + parseInt(params.maxstopovers.value);
+ const typeFlight = $('#roundtrip').is(':checked') ? 'round' : 'oneway';
+ url += "&typeFlight=" + typeFlight;
+ // url += "&directFlights=" + ( $('#directFlight').is(':checked') ? '1' : '0' );
+ const nights = typeof( params.nightsToStay.value ) == "string" ? params.nightsToStay.value.split('-') : [ params.nightsToStay.value ];
+ if ( typeFlight=='round' ) {
+   url += "&daysInDestinationFrom=" + nights[0] + "&daysInDestinationTo=" + nights[ nights.length > 1 ? 1 : 0 ];
+ }
+ if ( sessionParams.selectedAirline ) url += "&selectedAirlines="+sessionParams.selectedAirline+"&selectedAirlinesExclude=false";
+ if (params.maxFlyDuration.value) url += "&maxFlyDuration=" + params.maxFlyDuration.value;  // in hours
+ if (params.maxFlyPrice.value) url += "&price_to=" + + params.maxFlyPrice.value;
+ if (params.dayInWeek.value) url += "&flyDaysType=departure&flyDays="+params.dayInWeek.value;  // only Fridays?
+ // url += "&limit=100";
+  
+ url += "&one_per_date=" + ( $('#onlyone').is(':checked') ? '1' : '0' );
+ if (to) url += "&to=" + encodeURIComponent(to);
+ console.log( "Params: " + JSON.stringify(params) + " -> Loading: " + url );
+ 
+ $.get( url, function( result ) {
+   // console.log( JSON.stringify(result.data) );
+   console.log( "Indirect flights to " + to + ":" + result.data.length );
+   $.get( url+"&directFlights=1", function( result2 ) {
+     console.log( "Direct flights to " + to + ":" + result2.data.length );
+     // console.log( JSON.stringify(result2.data) );
+       var combined = result.data.concat( result2.data ); // $.extend( result.data, result2.data );
+       // console.log( "Combined:" + JSON.stringify(combined) );
+       
+       // var selectedData = $("#example-table").tabulator("getSelectedData");
+       // TODO Add selected rows from previous search, if any
+       // console.log( "Previous rows: " + dump( selectedData ) );
+       
+       var rows = [];
+       for ( var i in combined ) {
+         var r = combined[i];
+         const depDate = getLocalDate( r.dTimeUTC, r.countryFrom.name );
+         rows.push( { from: r.cityFrom + '-' + r.flyFrom,
+                      to: r.cityTo + '-' + r.flyTo, 
+                      countryTo: r.countryTo.name,
+                      departure_time: depDate.toLocaleString('en-US', { hour: 'numeric', minute: 'numeric', hour12: false }),
+                      departure_day: depDate.toLocaleDateString('en-us', { weekday: 'short', month: 'short', day: 'numeric' } ), 
+                      duration: r.fly_duration, 
+                      stops: (r.route.length - 1),
+                      cost: ( sessionParams.firstFlightPrice ? sessionParams.firstFlightPrice + ' + ' : '' ) + '$' + r.price + 
+                             (sessionParams.firstFlightPrice ? ' = $' + addprices(sessionParams.firstFlightPrice+'+'+r.price) : '' ),
+                      airline: getAirlines( r.airlines ),
+                      flight_no: r.airlines[0] + '-' + r.route[0].flight_no,
+                      rating: 3,    // TODO calculate relative score, e.g. convenience of times, price, stopovers, etc.
+                      keep : false,
+                      r: r
+                  } )
+       }
+       
+       rows = rows.sort( function(a,b) { 
+         if ( (a.r.dTimeUTC==b.r.dTimeUTC) && (a.to == b.to) && (a.from==b.from) && (a.r.price==b.r.price) ) return 0; 
+         else if ( a.r.dTimeUTC!=b.r.dTimeUTC ) return a.r.dTimeUTC - b.r.dTimeUTC; 
+         else return a.r.price-b.r.price; 
+       } );
+       var filtered = [];
+       var dups = 0;
+       for ( var i=0; i<rows.length-1; ++i ) {
+          var a = rows[i], b = rows[i+1];
+          if ( (a.r.dTimeUTC != b.r.dTimeUTC) || (a.to!=b.to) || (a.from!=b.from) || (a.duration!=b.duration) ) {
+             filtered.push( a );
+          } else {
+             delete a.r;
+             // console.log( "Removing duplicate: " + JSON.stringify(a) + " b to " + b.to + ":" + JSON.stringify(b) );
+             ++dups;
+          }
+          if ( i==rows.length-2) { filtered.push(b); }
+       }
+       console.log( params.leaveFrom.value + ' - ' + filtered.length + " (unfiltered="+ result.data.length+" directOnly=" 
+                    + result2.data.length + ",duplicates="+dups+")" );
+       resolve( filtered );
+    }).fail( function (e) { reject( "Error getting direct flights"); } );
+ }).fail( function (e) { reject("Error getting flights" + JSON.stringify(e) ); } );;
+ 
+});
+}
+
+function exploreDestination( row, dest ) {
+  params.flyTo.value = dest;
+  
+  // If dates are currently a specific day, extend the interval
+  if ( params.leaveFrom.value == params.leaveTo.value ) {
+      const today = new Date();
+      var fromDate = new Date( params.leaveFrom.value );
+      var toDate = new Date( params.leaveFrom.value );
+      fromDate.setDate(fromDate.getDate() - 7);
+      toDate.setDate(toDate.getDate() + 7);
+      params.leaveFrom.value = (fromDate>today?fromDate:today).toLocaleDateString("en-US");
+      params.leaveTo.value   = toDate.toLocaleDateString("en-US");
+  }
+  sessionParams = Object.assign( {}, resetSessionParams );
+  params.dtimefrom.value = null;
+  refreshFlights();
+}
+
+const visa_menu = [
+ { title : "Explore country", text : "Get options for flying to '{countryTo}' +/- 7 days from depature", 
+   callback: function (row) {
+     exploreDestination( row, row.r.countryTo.code );
+   } 
+ },
+ { title : "Check Visa from Italy", text : "Check visa requirements for '{countryTo}' for Italian visitors", 
+   callback: function (row) {
+     var url = "http://www.doyouneedvisa.com/visa/";
+     window.open(url+"Italy/"+row.countryTo);
+   } 
+ },
+ { title : "Check Visa from NL", text : "Check visa requirements for '{countryTo}' for Dutch visitors", 
+   callback: function (row) {
+     var url = "http://www.doyouneedvisa.com/visa/";
+     window.open(url+"Netherlands/"+row.countryTo);
+   } 
+ },
+];
+
+const dest_menu = [
+ { title : "Change origin", text : "Change origin to '{to}'", 
+   callback: function (row) {
+     params.flyFrom.value = row.to;
+     sessionParams = Object.assign( {}, resetSessionParams );
+     refreshFlights();
+   } 
+ },
+ { title : "Find connection", text : "Find connection in '{to}' with at least 30mins transfer", 
+   callback: function (row) {
+     const nextDepature = new Date( ( parseInt( row.r.aTimeUTC ) + 30*60 ) * 1000 )
+     params.flyFrom.value = row.to;
+     params.dtimefrom.value = nextDepature.getHours() + ':' + nextDepature.getMinutes();
+     sessionParams.firstFlightPrice = row.cost;
+     
+     if ( params.singleAirline.value ) {
+         sessionParams.selectedAirline = row.r.airline;
+     }
+     
+     refreshFlights();
+   } 
+ },
+ { title : "Find return flight", text : "Search for return flight from '{to}'", 
+   callback: function (row) {
+     var returnDepature = new Date( parseInt( row.r.aTimeUTC ) * 1000 );
+     const nights = params.nightsToStay.value.split('-');
+     returnDepature.setDate( returnDepature.getDate() + parseInt( nights[0] ) );
+     params.leaveFrom.value = returnDepature.toLocaleDateString("en-US");
+     if ( nights.length == 1 ) params.leaveTo.value = params.leaveFrom.value;
+     else {
+        returnDepature.setDate( returnDepature.getDate() + parseInt( nights[1] ) - parseInt( nights[0] ) );
+        params.leaveTo.value = returnDepature.toLocaleDateString("en-US");
+     }
+     params.flyFrom.value = row.r.mapIdto;
+     params.flyTo.value = row.r.mapIdfrom;
+     params.dtimefrom.value = null;
+     sessionParams.firstFlightPrice = row.cost;
+     
+     if ( params.singleAirline.value ) {
+         sessionParams.selectedAirline = row.r.airline;
+     }
+     
+     refreshFlights();
+   } 
+ },
+ { title : "Explore destination", text : "Get options for flying to '{to}' +/- 7 days from depature", 
+   callback: function (row) {
+     exploreDestination( row, row.r.mapIdto );  // Some city names may contain special characters, e.g. "Cancun" has an accent
+   } 
+ },
+ { title : "Google Maps", text : "Lookup on Google maps", 
+   callback: function (row) {
+     window.open("https://www.google.com/maps/place/" + row.to )
+   } 
+ },
+ { title : "Marriott", text : "Look for a Marriott hotel in '{to}'", 
+   callback: function (row) {
+     lookForMarriott( row );
+   } 
+ },
+ { title : "AirBnB", text : "Look for an AirBnB in '{to}'", 
+   callback: function (row) {
+     openAirbnb( row );
+   } 
+ },
+ { title : "Save search parameters", text : "Save current search parameters", 
+   callback: function (row) {
+     const savedQueries = window.localStorage.getItem('searches');
+     console.log( "Saved queries: " + savedQueries );
+     window.localStorage.setItem('searches', JSON.stringify( savedQueries ? JSON.parse(savedQueries).concat( [params] ) : [ params ] ) );
+   } 
+ },
+ { title : "Clear saved searches", text : "Remove all saved searches", 
+   callback: function (row) {
+     window.localStorage.removeItem('searches');
+   } 
+ },
+ { title : "Find routes", text : "Show known airline routes", 
+   callback: function (row) {
+     getRoutes( row.r.flyFrom, row.r.flyTo );
+   } 
+ },
+];
+
+function buildPriceMenu(e, cell) {
+  const row = cell.getData();
+  var price_menu = [
+     { title : "Book", text : "Book this flight on skypicker", 
+       callback: function (row) {
+          window.open( row.r.deep_link );
+       } 
+     },
+  ];
+  
+  const airlines = {
+    NK: { name: "Spirit", book: bookWithSpirit },
+    UA: { name: "United", book: bookWithUnited },
+  };
+  
+  if ( airlines[ row.airline ] ) {
+    const airline = airlines[ row.airline ];
+    price_menu.push( { title : "Book with " + airline.name, text : "Book this flight on " + airline.name, 
+       callback: function (row) {
+         airline.book(row);
+       } 
+      }
+    );
+  }
+  createPopup(e,row,price_menu); 
+  e.stopPropagation(); 
+}
+
+function showFlightsIn(cell) {
+    // cell.getElement().parent().siblings().hide();
+  const flight = cell.getData();
+  var data = [];
+  for ( var i in flight.flights_in ) {
+	const f = flight.flights_in[i];
+	const d = new Date( f.dTimeUTC * 1000 ).toLocaleString('en-US', { hour: 'numeric', minute: 'numeric', hour12: false });
+	const a = new Date( f.aTimeUTC * 1000 ).toLocaleString('en-US', { hour: 'numeric', minute: 'numeric', hour12: false });
+	const w = ( parseInt( flight.r.dTimeUTC ) - parseInt( f.aTimeUTC ) ) / 60;
+	data.push( { id : i, price: f.price, d: d, a: a, link: f.deep_link, wait: w } );
+  }
+  $("#flights-in").tabulator({
+   data: data,
+   layout: "fitColumns",
+   responsiveLayout: true, // hide cols that don't fit, e.g. on mobile
+   selectable:false,        // can select rows for keeping
+   columns:[
+	{title:"Price", field:"price", width: 100, sortable:true },
+	{title:"Depart", field:"d", width: 100, align:"center", sortable:true, sorter:"datetime", sorterParams:{format:"hh:mm"} },
+	{title:"Arrive", field:"a", width: 100, align:"center", sortable:true, sorter:"datetime", sorterParams:{format:"hh:mm"} },
+	{title:"Wait time (min)", field:"wait", width: 100, align:"center", sortable:true, sorter:"alphanum" },
+	{title:"Book", field:"link", width: 70, align:"center", sortable:false, formatter:"link", formatterParams:{label:"Book with skypicker"} },
+   ],
+
+   initialSort:[
+	{column:"price", dir:"asc"},  //sort by this first
+   ],
+
+   persistentSort:true, //Enable sort persistence in cookie
+  });
+
+};
+
+function createFlightTable(id,flights) {
+
+  const showStopovers = function(cell) {
+    const r = cell.getData().r;
+    if ( r.route.length==1 ) return "No stops";
+    var stops = [];
+    for ( var i=0; i<r.route.length-1; ++i ) {
+      stops.push( (r.route[i+1].dTimeUTC - r.route[i].aTimeUTC)/60 + ' min' );
+    }
+    return stops.join(',');
+  };
+  
+  $(id).tabulator({
+   data: flights,
+   layout: "fitColumns",
+   responsiveLayout: true, // hide cols that don't fit, e.g. on mobile
+   selectable:true,        // can select rows for keeping
+   columns:[
+    {title:"From", field:"from", width: 100, sortable:true, cellClick:function(e,cell) { if ( params.viaUS.value ) showFlightsIn(cell); } },
+    {title:"Destination", field:"to", width: 100, sortable:true, cellClick:function(e, cell){ createPopup(e,cell.getData(),dest_menu); e.stopPropagation(); },
+       tooltip: function(cell) { return "Hub for:" + JSON.stringify( list_airlines_if_hub( cell.getData().r.flyTo ) ) } },
+    {title:"Country", field:"countryTo", width: 100, sortable:true, cellClick:function(e,cell) { createPopup(e,cell.getData(),visa_menu); e.stopPropagation(); } },
+    {title:"Time", field:"departure_time", width: 70, align:"center", sortable:true, sorter:"datetime", sorterParams:{format:"hh:mm"} },
+    {title:"Day", field:"departure_day", width: 80, align:"center", sortable:true, sorter:"datetime", sorterParams:{format:"dddd, MMM DD"} },
+    {title:"Duration", field:"duration", width: 80, sortable:true, align:"center", sorter:"alphanum"},
+    {title:"Stops", field:"stops", width: 30, align:"center", sortable:true, tooltip: showStopovers },
+    {title:"Price (USD)", field:"cost", width: 60, align:"center", sortable:true, sorter:"alphanum", cellClick: buildPriceMenu },
+    {title:"Airline", field:"airline", width: 30, align:"center" },
+    {title:"Flight#", field:"flight_no", width: 80, align:"center", sortable:false, cellClick:function(e,cell) { window.open( "https://www.google.com/search?q=flight%20"+cell.getValue() ); e.stopPropagation(); } },
+	{title:"Flights in", field:"min_price_in", width: 200, sortable: false },
+	{title:"Total price", field:"total_price", width: 80, sortable: true, sorter: "number" }
+    // {title:"Rating", field:"rating", align:"center", formatter:"star", sorter:"boolean" },
+    // {title:"Keep", field:"keep", width: 10, align:"center", formatter:"tick", sorter:"boolean", editor:true, topCalc:"count" },
+   ],
+   
+   initialSort:[
+     {column:"departure", dir:"asc"},  //sort by this first
+     // {column:"duration", dir:"asc"},   //then sort by this second, broken ( cancels out the first )
+   ],
+   
+   persistentSort:true, //Enable sort persistence in cookie
+   layoutColumnsOnNewData:true, // Fit columns to data width
+   
+   rowSelected:function(row){
+     const flight = row.getData();
+     $(id).tabulator("setFilter", (ret_row,params) => {
+       // Return true if included
+       return flight.id == ret_row.id;
+     }, { } );
+   },
+   rowDeselected:function(row){
+     $(id).tabulator("clearFilter", true);
+     $("#flights-in").html("");
+   }
+   });
+}
+
+$( document ).ready(function() {
+  loadPresetNames();
+  createParamsDiv( params );
+  
+  $('#roundtrip').click(function() {
+    refreshFlights();
+  });
+  $('#onlyone').click(function() {
+    refreshFlights();
+  });
+  
+  createFlightTable("#example-table");
+  refreshFlights();
+});
+</script>
+</head>
+<body>
+Round trips: <input type="checkbox" id="roundtrip"/>
+Get only cheapest flight per day: <input type="checkbox" id="onlyone"/>
+<div>Flights found:<span id="flightsfound"/></div>
+<div id="example-table"></div>
+<div id="flights-in"></div>
+<div>Deals from Houston:<a href="https://www.airfarewatchdog.com/cheap-flights/from-Houston-Texas/IAH/" target="_blank">Airfarewatchdog.com</a></div>
+</body>
+</html>
